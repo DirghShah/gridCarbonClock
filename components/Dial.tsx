@@ -13,6 +13,15 @@ const TIER_GLOW: Record<IntensityTier, string> = {
   dirty: "shadow-[0_0_60px_-10px_var(--color-dirty)]",
 };
 
+function relativeAge(asOfIso: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(asOfIso).getTime()) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 export function Dial({
   gPerKWh,
   tier,
@@ -28,12 +37,10 @@ export function Dial({
   topFuel: TopFuel | null;
   mix: FuelMixMW;
 }) {
-  // Map 50..800 g/kWh to 0..1 for ring fill (covers ~all US BAs)
   const pct = Math.max(0.05, Math.min(1, (gPerKWh - 50) / 750));
   const radius = 90;
   const circ = 2 * Math.PI * radius;
   const dash = circ * pct;
-
   const breakdown = mixPercentages(mix).slice(0, 4);
 
   return (
@@ -61,7 +68,7 @@ export function Dial({
       <div className="text-center">
         <div className="text-lg font-medium">{tierLabel(tier)}</div>
         <div className="text-sm text-[var(--color-muted)]">
-          {baName} · as of {new Date(asOf).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+          {baName} · EIA data updated {relativeAge(asOf)}
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
-import { getCurrentIntensity } from "@/lib/data/source";
+import { getCurrentIntensity, GridDataUnavailable } from "@/lib/data/source";
 import { DEFAULT_BA, isBACode } from "@/lib/zones/balancingAuthorities";
 import { zipToBA } from "@/lib/zones/zipToBA";
 
@@ -16,23 +16,22 @@ export async function GET(req: Request) {
     ba = baParam;
   } else if (zip) {
     const res = zipToBA(zip);
-    if (!res.ok) {
-      return NextResponse.json({ error: res.reason, message: messageFor(res.reason) }, { status: 400 });
-    }
+    if (!res.ok) return NextResponse.json({ error: "zip", reason: res.reason }, { status: 400 });
     ba = res.ba;
   }
 
-  const data = await cached(`intensity:current:${ba}`, 300, () => getCurrentIntensity(ba));
-  return NextResponse.json(data, {
-    headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
-  });
-}
-
-function messageFor(reason: string): string {
-  switch (reason) {
-    case "invalid": return "Enter a valid 5-digit US ZIP.";
-    case "not-us": return "We cover the US grid only.";
-    case "unsupported": return "That region isn't on the EIA-930 grid yet (Alaska, Hawaii, military bases).";
-    default: return "Couldn't resolve that ZIP.";
+  try {
+    const data = await cached(`intensity:current:${ba}`, 300, () => getCurrentIntensity(ba));
+    return NextResponse.json(data, {
+      headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
+    });
+  } catch (err) {
+    if (err instanceof GridDataUnavailable) {
+      return NextResponse.json(
+        { error: "grid-data-unavailable", reason: err.reason, message: err.message },
+        { status: 503 },
+      );
+    }
+    throw err;
   }
 }

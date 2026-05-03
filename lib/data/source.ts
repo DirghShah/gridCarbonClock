@@ -1,30 +1,36 @@
 import { intensityFromMix, tierFor, topFuelFromMix } from "@/lib/carbon/intensity";
 import { fetchCurrentMix, fetchHistoricalMix, EiaUnavailable } from "@/lib/eia/client";
 import { buildPatternForecast } from "@/lib/forecast/historicalPattern";
-import { mockCurrentMix, mockHistory } from "./mock";
 import { getBA, type BACode } from "@/lib/zones/balancingAuthorities";
 import type { CurrentIntensity, Forecast, ForecastHour } from "@/lib/types";
 
-const FORCE_MOCK = (process.env.DATA_SOURCE ?? "").toLowerCase() === "mock";
+export class GridDataUnavailable extends Error {
+  constructor(public readonly reason: "no-key" | "eia-down" | "eia-empty", message: string) {
+    super(message);
+  }
+}
+
+function ensureKey() {
+  if (!process.env.EIA_API_KEY) {
+    throw new GridDataUnavailable(
+      "no-key",
+      "EIA_API_KEY not configured. Set it in your environment to enable live data.",
+    );
+  }
+}
 
 export async function getCurrentIntensity(ba: BACode): Promise<CurrentIntensity> {
+  ensureKey();
   let asOf: string;
   let mix;
-  let used: "eia" | "mock" = "eia";
-
-  if (FORCE_MOCK) {
-    ({ asOf, mix } = mockCurrentMix(ba));
-    used = "mock";
-  } else {
-    try {
-      ({ asOf, mix } = await fetchCurrentMix(ba));
-    } catch (err) {
-      if (!(err instanceof EiaUnavailable)) console.warn(`[grid-carbon] EIA current failed:`, err);
-      ({ asOf, mix } = mockCurrentMix(ba));
-      used = "mock";
+  try {
+    ({ asOf, mix } = await fetchCurrentMix(ba));
+  } catch (err) {
+    if (err instanceof EiaUnavailable) {
+      throw new GridDataUnavailable("eia-down", err.message);
     }
+    throw new GridDataUnavailable("eia-down", String(err));
   }
-
   const gPerKWh = intensityFromMix(mix);
   return {
     ba,
@@ -34,26 +40,24 @@ export async function getCurrentIntensity(ba: BACode): Promise<CurrentIntensity>
     asOf,
     mix,
     topFuel: topFuelFromMix(mix),
-    source: used,
+    source: "eia",
   };
 }
 
 export async function getForecast(ba: BACode): Promise<Forecast> {
+  ensureKey();
   let history;
-  let used: "eia" | "mock" = "eia";
-
-  if (FORCE_MOCK) {
-    history = mockHistory(ba, 168);
-    used = "mock";
-  } else {
-    try {
-      history = await fetchHistoricalMix(ba, 168); // last 7 days
-      if (history.length < 24) throw new EiaUnavailable("Not enough history");
-    } catch (err) {
-      if (!(err instanceof EiaUnavailable)) console.warn(`[grid-carbon] EIA history failed:`, err);
-      history = mockHistory(ba, 168);
-      used = "mock";
+  try {
+    history = await fetchHistoricalMix(ba, 168);
+    if (history.length < 24) {
+      throw new GridDataUnavailable("eia-empty", "Not enough EIA history to build a forecast");
     }
+  } catch (err) {
+    if (err instanceof GridDataUnavailable) throw err;
+    if (err instanceof EiaUnavailable) {
+      throw new GridDataUnavailable("eia-down", err.message);
+    }
+    throw new GridDataUnavailable("eia-down", String(err));
   }
 
   const pattern = buildPatternForecast(history);
@@ -67,5 +71,5 @@ export async function getForecast(ba: BACode): Promise<Forecast> {
     };
   });
 
-  return { ba, baName: getBA(ba).name, hours, source: used };
+  return { ba, baName: getBA(ba).name, hours, source: "eia" };
 }
