@@ -57,7 +57,7 @@ const FUEL_LABEL: Record<FuelKey, string> = {
   SOLAR: "Solar",
   HYDRO: "Hydro",
   BIOMASS: "Biomass",
-  OTHER: "Other",
+  OTHER: "Storage & geothermal",
 };
 
 export function topFuelFromMix(mix: FuelMixMW): TopFuel | null {

@@ -160,6 +160,8 @@ export function Dashboard() {
 
       {error ? <ErrorCard err={error} onRetry={() => setRefreshTick((t) => t + 1)} /> : null}
 
+      {!error && current ? <StaleNotice asOf={current.asOf} /> : null}
+
       {!error && current ? (
         <Dial
           gPerKWh={current.gPerKWh}
@@ -220,6 +222,18 @@ function ErrorCard({ err, onRetry }: { err: FetchError; onRetry: () => void }) {
       >
         Retry
       </button>
+    </div>
+  );
+}
+
+function StaleNotice({ asOf }: { asOf: string }) {
+  const ageHours = (Date.now() - new Date(asOf).getTime()) / 3600_000;
+  if (ageHours < 4) return null;
+  const display = ageHours < 24 ? `${Math.round(ageHours)} hours` : `${Math.round(ageHours / 24)} days`;
+  return (
+    <div className="rounded-2xl border border-[var(--color-mid)] bg-[var(--color-card)] p-3 text-sm">
+      <strong>Heads up:</strong> EIA-930 hasn&apos;t published fresh data for this grid in {display}. The
+      numbers below are from the most recent hour they reported.
     </div>
   );
 }
