@@ -1,25 +1,27 @@
-import type { FuelMixMW, IntensityTier } from "@/lib/carbon/intensity";
+import type { FuelMixMW, IntensityTier, TopFuel } from "@/lib/carbon/intensity";
+import type { BACode } from "@/lib/zones/balancingAuthorities";
 
 export type CurrentIntensity = {
-  zone: string;
+  ba: BACode;
+  baName: string;
   gPerKWh: number;
   tier: IntensityTier;
   asOf: string; // ISO
   mix: FuelMixMW;
-  source: "ercot" | "eia" | "mock";
+  topFuel: TopFuel | null;
+  source: "eia" | "mock";
 };
 
 export type ForecastHour = {
-  ts: string; // ISO, top-of-hour local→UTC
+  ts: string; // ISO
   gPerKWh: number;
   tier: IntensityTier;
-  loadMW: number;
-  windMW: number;
-  solarMW: number;
+  topFuel: TopFuel | null;
 };
 
 export type Forecast = {
-  zone: string;
+  ba: BACode;
+  baName: string;
   hours: ForecastHour[];
-  source: "ercot" | "eia" | "mock";
+  source: "eia" | "mock";
 };

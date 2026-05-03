@@ -1,94 +1,71 @@
-import { intensityFromMix, tierFor, forecastIntensity } from "@/lib/carbon/intensity";
-import { fetchLatestFuelMix } from "@/lib/ercot/fuelMix";
-import { fetchForecasts } from "@/lib/ercot/forecast";
-import { fetchEiaFuelMix } from "@/lib/eia/client";
-import { mockCurrentMix, mockForecasts } from "./mock";
+import { intensityFromMix, tierFor, topFuelFromMix } from "@/lib/carbon/intensity";
+import { fetchCurrentMix, fetchHistoricalMix, EiaUnavailable } from "@/lib/eia/client";
+import { buildPatternForecast } from "@/lib/forecast/historicalPattern";
+import { mockCurrentMix, mockHistory } from "./mock";
+import { getBA, type BACode } from "@/lib/zones/balancingAuthorities";
 import type { CurrentIntensity, Forecast, ForecastHour } from "@/lib/types";
-import type { ErcotZone } from "@/lib/zones/zones";
 
-type Source = "ercot" | "eia" | "mock";
+const FORCE_MOCK = (process.env.DATA_SOURCE ?? "").toLowerCase() === "mock";
 
-function configuredSource(): Source {
-  const v = (process.env.DATA_SOURCE ?? "ercot").toLowerCase();
-  if (v === "eia" || v === "mock") return v;
-  return "ercot";
-}
-
-export async function getCurrentIntensity(zone: ErcotZone): Promise<CurrentIntensity> {
-  const source = configuredSource();
+export async function getCurrentIntensity(ba: BACode): Promise<CurrentIntensity> {
   let asOf: string;
   let mix;
-  let used: Source = source;
+  let used: "eia" | "mock" = "eia";
 
-  try {
-    if (source === "eia") {
-      ({ asOf, mix } = await fetchEiaFuelMix());
-    } else if (source === "ercot") {
-      ({ asOf, mix } = await fetchLatestFuelMix());
-    } else {
-      ({ asOf, mix } = mockCurrentMix());
-    }
-  } catch (err) {
-    console.warn(`[grid-carbon] ${source} fuel mix failed, using mock:`, err);
-    ({ asOf, mix } = mockCurrentMix());
+  if (FORCE_MOCK) {
+    ({ asOf, mix } = mockCurrentMix(ba));
     used = "mock";
+  } else {
+    try {
+      ({ asOf, mix } = await fetchCurrentMix(ba));
+    } catch (err) {
+      if (!(err instanceof EiaUnavailable)) console.warn(`[grid-carbon] EIA current failed:`, err);
+      ({ asOf, mix } = mockCurrentMix(ba));
+      used = "mock";
+    }
   }
 
   const gPerKWh = intensityFromMix(mix);
-  return { zone, gPerKWh, tier: tierFor(gPerKWh), asOf, mix, source: used };
+  return {
+    ba,
+    baName: getBA(ba).name,
+    gPerKWh,
+    tier: tierFor(gPerKWh, ba),
+    asOf,
+    mix,
+    topFuel: topFuelFromMix(mix),
+    source: used,
+  };
 }
 
-export async function getForecast(zone: ErcotZone): Promise<Forecast> {
-  const source = configuredSource();
-  let used: Source = source;
-  let load, wind, solar;
+export async function getForecast(ba: BACode): Promise<Forecast> {
+  let history;
+  let used: "eia" | "mock" = "eia";
 
-  try {
-    if (source === "ercot") {
-      ({ load, wind, solar } = await fetchForecasts());
-    } else {
-      // EIA doesn't expose hourly fuel-mix forecasts via free API; use mock
-      ({ load, wind, solar } = mockForecasts());
+  if (FORCE_MOCK) {
+    history = mockHistory(ba, 168);
+    used = "mock";
+  } else {
+    try {
+      history = await fetchHistoricalMix(ba, 168); // last 7 days
+      if (history.length < 24) throw new EiaUnavailable("Not enough history");
+    } catch (err) {
+      if (!(err instanceof EiaUnavailable)) console.warn(`[grid-carbon] EIA history failed:`, err);
+      history = mockHistory(ba, 168);
       used = "mock";
     }
-  } catch (err) {
-    console.warn(`[grid-carbon] forecast fetch failed, using mock:`, err);
-    ({ load, wind, solar } = mockForecasts());
-    used = "mock";
   }
 
-  // Align forecasts on shared timestamps (load is the spine — usually the longest)
-  const byTs = new Map<string, { load?: number; wind?: number; solar?: number }>();
-  for (const r of load) byTs.set(r.ts, { ...(byTs.get(r.ts) ?? {}), load: r.mw });
-  for (const r of wind) byTs.set(r.ts, { ...(byTs.get(r.ts) ?? {}), wind: r.mw });
-  for (const r of solar) byTs.set(r.ts, { ...(byTs.get(r.ts) ?? {}), solar: r.mw });
+  const pattern = buildPatternForecast(history);
+  const hours: ForecastHour[] = pattern.map((row) => {
+    const g = intensityFromMix(row.mix);
+    return {
+      ts: row.ts,
+      gPerKWh: g,
+      tier: tierFor(g, ba),
+      topFuel: topFuelFromMix(row.mix),
+    };
+  });
 
-  const now = Date.now();
-  const horizon = now + 24 * 3600_000;
-
-  const hours: ForecastHour[] = [...byTs.entries()]
-    .map(([ts, v]) => ({ ts, ...v }))
-    .filter((row) => {
-      const t = new Date(row.ts).getTime();
-      return t >= now - 3600_000 && t <= horizon && row.load != null;
-    })
-    .sort((a, b) => a.ts.localeCompare(b.ts))
-    .slice(0, 24)
-    .map((row) => {
-      const { gPerKWh } = forecastIntensity({
-        loadMW: row.load ?? 0,
-        windMW: row.wind ?? 0,
-        solarMW: row.solar ?? 0,
-      });
-      return {
-        ts: row.ts,
-        gPerKWh,
-        tier: tierFor(gPerKWh),
-        loadMW: row.load ?? 0,
-        windMW: row.wind ?? 0,
-        solarMW: row.solar ?? 0,
-      };
-    });
-
-  return { zone, hours, source: used };
+  return { ba, baName: getBA(ba).name, hours, source: used };
 }

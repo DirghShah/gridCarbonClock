@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { intensityFromMix, tierFor, forecastIntensity } from "@/lib/carbon/intensity";
+import { intensityFromMix, tierFor, topFuelFromMix, mixPercentages } from "@/lib/carbon/intensity";
 
 describe("intensityFromMix", () => {
   it("returns 0 for an empty mix", () => {
@@ -10,14 +10,12 @@ describe("intensityFromMix", () => {
     expect(intensityFromMix({ WIND: 1000, SOLAR: 500, NUCLEAR: 500 })).toBe(0);
   });
 
-  it("returns ~500 for a 100% gas mix (using blended GAS factor)", () => {
+  it("returns ~500 for a 100% gas mix", () => {
     expect(intensityFromMix({ GAS: 10000 })).toBe(500);
   });
 
   it("weights by MW share, not by count", () => {
-    // 90% wind + 10% gas → 50 g/kWh
-    const v = intensityFromMix({ WIND: 9000, GAS: 1000 });
-    expect(v).toBe(50);
+    expect(intensityFromMix({ WIND: 9000, GAS: 1000 })).toBe(50);
   });
 
   it("ignores negative or zero entries", () => {
@@ -26,38 +24,39 @@ describe("intensityFromMix", () => {
 });
 
 describe("tierFor", () => {
-  it.each([
-    [100, "clean"],
-    [300, "clean"],
-    [301, "mid"],
-    [450, "mid"],
-    [451, "dirty"],
-    [800, "dirty"],
-  ])("%i gCO2/kWh → %s", (g, tier) => {
-    expect(tierFor(g)).toBe(tier);
+  it("uses default thresholds when no BA provided", () => {
+    expect(tierFor(100)).toBe("clean");
+    expect(tierFor(300)).toBe("mid");
+    expect(tierFor(500)).toBe("dirty");
+  });
+
+  it("uses BA-specific thresholds when given", () => {
+    // BPAT is ~hydro-dominated, threshold for clean is 100
+    expect(tierFor(120, "BPAT")).toBe("mid");
+    expect(tierFor(80, "BPAT")).toBe("clean");
+    // MISO is coal-heavy, 380 is "clean" for it
+    expect(tierFor(380, "MISO")).toBe("clean");
+    expect(tierFor(381, "MISO")).toBe("mid");
   });
 });
 
-describe("forecastIntensity", () => {
-  it("attributes residual demand to gas", () => {
-    // 50 GW load, 10 GW wind, 5 GW solar → ~25.3 GW gas after baselines
-    // mix dominated by gas → mid-to-dirty intensity
-    const { gPerKWh, mix } = forecastIntensity({
-      loadMW: 50000,
-      windMW: 10000,
-      solarMW: 5000,
-    });
-    expect(mix.GAS).toBeGreaterThan(0);
-    expect(gPerKWh).toBeGreaterThan(250);
-    expect(gPerKWh).toBeLessThan(550);
+describe("topFuelFromMix", () => {
+  it("returns the largest fuel by MW", () => {
+    const top = topFuelFromMix({ WIND: 5000, GAS: 8000, COAL: 2000 });
+    expect(top?.key).toBe("GAS");
+    expect(top?.label).toBe("Natural gas");
+    expect(top?.sharePct).toBe(53);
   });
 
-  it("clamps gas to >= 0 when renewables exceed load", () => {
-    const { mix } = forecastIntensity({
-      loadMW: 30000,
-      windMW: 25000,
-      solarMW: 15000,
-    });
-    expect(mix.GAS).toBe(0);
+  it("returns null on empty mix", () => {
+    expect(topFuelFromMix({})).toBeNull();
+  });
+});
+
+describe("mixPercentages", () => {
+  it("returns sorted descending percentages", () => {
+    const pcts = mixPercentages({ WIND: 5000, GAS: 8000, COAL: 2000 });
+    expect(pcts.map((p) => p.key)).toEqual(["GAS", "WIND", "COAL"]);
+    expect(pcts[0].sharePct).toBe(53);
   });
 });

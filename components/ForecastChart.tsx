@@ -2,7 +2,6 @@
 
 import { Bar, BarChart, Cell, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ForecastHour } from "@/lib/types";
-import { TIER_THRESHOLDS } from "@/lib/carbon/intensity";
 
 const TIER_COLOR = {
   clean: "var(--color-clean)",
@@ -29,9 +28,9 @@ export function ForecastChart({
       <div className="mb-4 flex items-baseline justify-between">
         <h2 className="text-lg font-semibold">Next 24 hours</h2>
         <div className="flex gap-3 text-xs text-[var(--color-muted)]">
-          <Legend color={TIER_COLOR.clean} label={`≤${TIER_THRESHOLDS.clean}`} />
-          <Legend color={TIER_COLOR.mid} label={`≤${TIER_THRESHOLDS.mid}`} />
-          <Legend color={TIER_COLOR.dirty} label={`>${TIER_THRESHOLDS.mid}`} />
+          <Legend color={TIER_COLOR.clean} label="Cleanest" />
+          <Legend color={TIER_COLOR.mid} label="Average" />
+          <Legend color={TIER_COLOR.dirty} label="Dirtiest" />
         </div>
       </div>
       <div className="h-64 w-full">
@@ -51,7 +50,21 @@ export function ForecastChart({
             <Tooltip
               contentStyle={{ background: "var(--color-card)", border: "1px solid var(--color-border)", borderRadius: 8 }}
               labelStyle={{ color: "var(--color-fg)" }}
-              formatter={(value: number) => [`${Math.round(value)} g/kWh`, "Intensity"]}
+              content={({ active, payload }) => {
+                if (!active || !payload || payload.length === 0) return null;
+                const row = payload[0].payload as ForecastHour & { hour: string };
+                return (
+                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-sm">
+                    <div className="font-medium">{row.hour}</div>
+                    <div>{Math.round(row.gPerKWh)} gCO₂/kWh</div>
+                    {row.topFuel ? (
+                      <div className="text-xs text-[var(--color-muted)]">
+                        Mostly {row.topFuel.label.toLowerCase()} ({row.topFuel.sharePct}%)
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }}
             />
             <Bar dataKey="gPerKWh" radius={[4, 4, 0, 0]}>
               {data.map((d) => (
